@@ -11,6 +11,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Electron 43's ASAR fs.stat({ bigint: true }) returns numbers instead of bigints, breaking @effect/platform-node FileSystem.stat.
+import * as NodeFS from "node:fs";
 
 export const DESKTOP_HOST = "app";
 const DESKTOP_PRODUCTION_SCHEME = "t3code";
@@ -223,9 +225,14 @@ const serveDesktopAsset = Effect.fn("desktop.protocol.serveAsset")(function* (
   if (assetPath !== root && !assetPath.startsWith(root + path.sep)) {
     return new Response(null, { status: 404 });
   }
-  const stat = yield* fileSystem.stat(assetPath).pipe(Effect.orElseSucceed(() => null));
+  // Electron 43's ASAR fs.stat({ bigint: true }) returns numbers instead of bigints, causing
+  // @effect/platform-node FileSystem.stat to fail on packaged assets inside app.asar.
+  const isFile = yield* Effect.tryPromise({
+    try: () => NodeFS.promises.stat(assetPath).then((s) => s.isFile()),
+    catch: () => false,
+  }).pipe(Effect.orElseSucceed(() => false));
   let filePath = assetPath;
-  if (stat?.type !== "File") {
+  if (!isFile) {
     const wantsHtml = request.headers.get("accept")?.includes("text/html") ?? false;
     if (path.extname(assetPath) !== "" && !wantsHtml) {
       return new Response(null, { status: 404 });

@@ -1,0 +1,74 @@
+name: Build macOS Intel (x64) DMG
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Build version (e.g. 0.1.13-oclp.1)"
+        required: false
+        default: "0.1.13-oclp.1"
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/desktop/**'
+      - '.github/workflows/build-mac-intel-dmg.yml'
+
+concurrency:
+  group: build-mac-intel-dmg-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-intel-dmg:
+    name: Build T3 Code Intel x64 DMG (Electron 43)
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Ensure Rosetta for macOS x64 cross-build
+        run: |
+          if [[ "$(uname -m)" == "arm64" ]] && ! /usr/bin/arch -x86_64 /usr/bin/true 2>/dev/null; then
+            softwareupdate --install-rosetta --agree-to-license || true
+          fi
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
+
+      - name: Install dependencies
+        run: |
+          cp .env.example .env
+          vp install --no-frozen-lockfile
+
+      - name: Build Intel x64 DMG
+        env:
+          T3CODE_TELEMETRY_CHANNEL: dev
+          T3CODE_DESKTOP_UNTRUSTED_BUNDLE: "true"
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: |
+          BUILD_VERSION="${{ github.event.inputs.version || '0.1.13-oclp.1' }}"
+          echo "Building T3 Code version ${BUILD_VERSION} for Intel macOS (Electron 43.8.13)..."
+          node scripts/build-desktop-artifact.ts --platform mac --target dmg --arch x64 --build-version "${BUILD_VERSION}" --verbose
+
+      - name: Upload DMG to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: T3-Code-Intel-x64-Electron43-DMG
+          path: |
+            release/*.dmg
+            release/*.zip
+          if-no-files-found: error
+          retention-days: 14
